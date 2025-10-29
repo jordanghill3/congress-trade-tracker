@@ -6,10 +6,10 @@ from datetime import datetime, timedelta
 from collections import defaultdict
 import os
 
-# ========== CONFIG (change these 3 lines only) ==========
-GMAIL_USER = os.getenv("GMAIL_USER")      # you@gmail.com
-GMAIL_PASS = os.getenv("GMAIL_PASS")      # App password
-EMAIL_TO = os.getenv("EMAIL_TO")          # you@gmail.com or 1234567890@vtext.com
+# ========== CONFIG ==========
+GMAIL_USER = os.getenv("GMAIL_USER")
+GMAIL_PASS = os.getenv("GMAIL_PASS")
+EMAIL_TO = os.getenv("EMAIL_TO")
 
 ACTIVE_TRADERS = ["Josh Gottheimer", "David Rouzer", "Mark Green"]
 PELOSI_MAX_LAG = 20
@@ -17,7 +17,6 @@ MIN_AMOUNT = 50001
 MAX_LAG = 30
 SECTOR_SURGE = 3
 
-# ========== DON'T TOUCH BELOW HERE ==========
 API_URL = "https://api.quiverquant.com/beta/live/congresstrading"
 
 SECTORS = {
@@ -36,65 +35,85 @@ def get_sector(ticker):
     return "Other"
 
 def send_email(subject, body):
+    if not EMAIL_TO or not GMAIL_USER or not GMAIL_PASS:
+        print("Missing email config!")
+        return
+    
     msg = EmailMessage()
     msg.set_content(body)
     msg["Subject"] = subject
     msg["From"] = GMAIL_USER
-    msg["To"] = EMAIL_TO
     
-    with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
-        server.login(GMAIL_USER, GMAIL_PASS)
-        server.send_message(msg)
-    print("✅ Email sent!")
+    recipients = [email.strip() for email in EMAIL_TO.split(",") if email.strip()]
+    if not recipients:
+        print("No recipients!")
+        return
+    msg["To"] = ", ".join(recipients)
+    
+    try:
+        with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
+            server.login(GMAIL_USER, GMAIL_PASS)
+            server.send_message(msg)
+        print(f"Email sent to: {', '.join(recipients)}")
+    except Exception as e:
+        print(f"Failed to send email: {e}")
 
-# ========== MAIN LOGIC ==========
+# ========== MAIN ==========
 def main():
-    # Get trades
-    print("🔍 Checking for new trades...")
-    resp = requests.get(API_URL, timeout=10)
-    if resp.status_code != 200:
-        print("❌ API error")
+    print("Checking for new trades...")
+    
+    # Fetch API
+    try:
+        resp = requests.get(API_URL, timeout=10)
+        if resp.status_code != 200:
+            print(f"API error: {resp.status_code}")
+            return
+        raw_trades = resp.json()
+    except Exception as e:
+        print(f"Request failed: {e}")
         return
     
-    raw_trades = resp.json()
-    
-    # Load old trades
+    # Load or create trades.json
     try:
         with open("trades.json", "r") as f:
             all_trades = json.load(f)
-        seen = {t["TransactionID"] for t in all_trades}
+        print(f"Loaded {len(all_trades)} existing trades")
     except:
         all_trades = []
-        seen = set()
+        print("No trades.json found — starting fresh")
     
-    # Find new trades
+    seen = {t["TransactionID"] for t in all_trades}
     new_trades = []
+    
     for t in raw_trades:
         if t["TransactionID"] not in seen:
-            # Calculate lag
             trade_date = datetime.strptime(t["Date"], "%Y-%m-%d")
             report_date = datetime.strptime(t.get("Filed", t["Date"]), "%Y-%m-%d")
             lag = (report_date - trade_date).days
-            
             t["Lag"] = lag
             t["Sector"] = get_sector(t["Ticker"])
             new_trades.append(t)
             all_trades.append(t)
     
     if not new_trades:
-        print("ℹ️  No new trades")
+        print("No new trades")
         return
     
-    # Save all trades
-    with open("trades.json", "w") as f:
-        json.dump(all_trades, f, indent=2)
+    # Save updated trades
+    try:
+        with open("trades.json", "w") as f:
+            json.dump(all_trades, f, indent=2)
+        print(f"Saved {len(all_trades)} trades")
+    except Exception as e:
+        print(f"Save failed: {e}")
     
-    print(f"✅ Found {len(new_trades)} new trades")
-    
-    # ========== ALERT 1: High-signal trades ==========
+    # ========== ALERTS ==========
     alerts = []
     for t in new_trades:
-        amount = int(t["Range"].split("$")[1].split("-")[0].replace(",", ""))
+        try:
+            amount = int(t["Range"].split("$")[1].split("-")[0].replace(",", ""))
+        except:
+            amount = 0
         
         is_pelosi = "Pelosi" in t["Representative"]
         lag_ok = t["Lag"] <= (PELOSI_MAX_LAG if is_pelosi else MAX_LAG)
@@ -104,15 +123,15 @@ def main():
            amount >= MIN_AMOUNT and \
            lag_ok:
             
-            alert = f"""🚨 HIGH SIGNAL TRADE
-👤 {t['Representative']}
-📅 {t['Date']} (Lag: {t['Lag']} days)
-💰 Purchase {t['Range']}
-📈 {t['Ticker']} ({t['Sector']})
-🔗 {t['ReportLink']}"""
+            alert = f"""HIGH SIGNAL TRADE
+{t['Representative']}
+{t['Date']} (Lag: {t['Lag']} days)
+Purchase {t['Range']}
+{t['Ticker']} ({t['Sector']})
+{t['ReportLink']}"""
             alerts.append(alert)
     
-    # ========== ALERT 2: Sector surges ==========
+    # Sector surge
     cutoff = datetime.now() - timedelta(days=7)
     recent = [t for t in all_trades 
               if datetime.strptime(t['Date'], '%Y-%m-%d') >= cutoff 
@@ -126,18 +145,16 @@ def main():
     for sector, count in sector_count.items():
         if count >= SECTOR_SURGE:
             buyers = list({t['Representative'] for t in recent if t['Sector'] == sector})
-            alert = f"""🌊 SECTOR SURGE: {sector}
-🔥 {count} members bought in 7 days
-👥 {', '.join(buyers[:5])}"""
+            alert = f"""SECTOR SURGE: {sector}
+{count} members bought in 7 days
+{', '.join(buyers[:5])}"""
             alerts.append(alert)
     
-    # Send email
     if alerts:
         body = "\n\n---\n\n".join(alerts)
-        send_email("🚨 Congress Trade Alert", body)
-        print("🎉 Alerts sent!")
+        send_email("Congress Trade Alert", body)
     else:
-        print("ℹ️  No alerts triggered")
+        print("No alerts triggered")
 
 if __name__ == "__main__":
     main()
