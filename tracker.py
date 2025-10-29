@@ -41,9 +41,17 @@ def get_sector(ticker):
     return "Other"
 
 def fetch_with_retry(url, max_retries=3, timeout=20):
+    # Add a real browser UA to avoid S3 403 on GitHub runners
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/118.0.0.0 Safari/537.36"
+        )
+    }
     for attempt in range(max_retries):
         try:
-            r = requests.get(url, timeout=timeout)
+            r = requests.get(url, headers=headers, timeout=timeout)
             if r.status_code == 200:
                 return r.json()
             else:
@@ -61,7 +69,7 @@ def normalize_house(item):
     try:
         date_str  = item.get("transaction_date") or item.get("transaction_date_original") or item.get("transaction_date_dt")
         filed_str = item.get("disclosure_date") or item.get("filed") or ""
-        # Normalize date formats to YYYY-MM-DD
+
         def norm(d):
             if not d: return ""
             for fmt in ("%Y-%m-%d", "%m/%d/%Y", "%Y-%m-%dT%H:%M:%S"):
@@ -70,16 +78,16 @@ def normalize_house(item):
                 except Exception:
                     pass
             return d[:10]
+
         date  = norm(date_str)
         filed = norm(filed_str) if filed_str else date
 
-        rep   = item.get("representative") or ""
-        ticker= (item.get("ticker") or "").upper().strip()
-        typ   = (item.get("type") or "").title()  # "Purchase", "Sale", etc.
-        rng   = item.get("amount") or ""          # e.g., "$1,001 - $15,000"
-        link  = item.get("link") or item.get("ptr_link") or ""
-        # Build a reasonably unique id
-        tid   = f"H|{rep}|{ticker}|{date}|{filed}|{typ}|{rng}"
+        rep    = item.get("representative") or ""
+        ticker = (item.get("ticker") or "").upper().strip()
+        typ    = (item.get("type") or "").title()
+        rng    = item.get("amount") or ""
+        link   = item.get("link") or item.get("ptr_link") or ""
+        tid    = f"H|{rep}|{ticker}|{date}|{filed}|{typ}|{rng}"
 
         return {
             "Representative": rep,
@@ -115,7 +123,6 @@ def normalize_senate(item):
         typ    = (item.get("type") or "").title()
         rng    = item.get("amount") or ""
         link   = item.get("ptr_link") or item.get("link") or ""
-
         tid    = f"S|{rep}|{ticker}|{date}|{filed}|{typ}|{rng}"
 
         return {
@@ -137,7 +144,7 @@ def parse_amount_floor(range_str):
     try:
         if not range_str or "$" not in range_str:
             return 0
-        part = range_str.split("$", 1)[1]  # after first $
+        part = range_str.split("$", 1)[1]
         left = part.split("-")[0].strip().replace(",", "")
         return int(left)
     except Exception:
