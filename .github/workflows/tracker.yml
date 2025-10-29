@@ -3,22 +3,28 @@ on:
   schedule:
     - cron: "*/30 * * * *"
   workflow_dispatch:
+
 jobs:
   run:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-python@v4
         with:
           python-version: '3.11'
+
       - name: Install requests
         run: pip install requests
+
       - name: Run tracker
         env:
           GMAIL_USER: ${{ secrets.GMAIL_USER }}
           GMAIL_PASS: ${{ secrets.GMAIL_PASS }}
           EMAIL_TO: ${{ secrets.EMAIL_TO }}
+        continue-on-error: true  # Don't hard-fail on script errors
         run: python tracker.py
+
       - name: Commit trades.json
         run: |
           git config user.name "github-actions"
