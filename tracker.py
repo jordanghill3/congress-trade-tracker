@@ -158,6 +158,3 @@ Purchase {t['Range']}
 
 if __name__ == "__main__":
     main()
-
-# === TEST EMAIL — REMOVE AFTER ===
-send_email("TEST", "Your Congress tracker is LIVE and WORKING! 🚀\n\nReal alerts will come here soon.")
