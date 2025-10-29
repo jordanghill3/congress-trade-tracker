@@ -1,0 +1,23 @@
+name: Congress Alerts
+on:
+  schedule:
+    - cron: "*/30 * * * *"
+  workflow_dispatch:
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+      - run: python tracker.py
+        env:
+          GMAIL_USER: ${{ secrets.GMAIL_USER }}
+          GMAIL_PASS: ${{ secrets.GMAIL_PASS }}
+          EMAIL_TO: ${{ secrets.EMAIL_TO }}
+      - run: |
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
+          git add trades.json || true
+          git diff --quiet || git commit -m "Update trades" && git push || true
